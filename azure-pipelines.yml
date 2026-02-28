@@ -87,3 +87,56 @@ stages:
             --resource-group cloudretail-vm_group \
             --query properties.configuration.ingress.fqdn \
             --output tsv
+
+- stage: Production
+  displayName: 'Deploy to Production'
+  dependsOn: Staging
+  condition: succeeded('Staging')
+  jobs:
+  - deployment: DeployProduction
+    displayName: 'Deploy to Production Container App'
+    pool:
+      name: 'CloudRetailAgentPool'
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: 'imageTag'
+              path: '$(Pipeline.Workspace)/imageTag'
+
+          - task: AzureCLI@2
+            displayName: 'Deploy to Production Azure Container App'
+            inputs:
+              azureSubscription: 'azure-connection'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                IMAGE_TAG=$(cat $(Pipeline.Workspace)/imageTag/imagetag.txt)
+                IMAGE="cloudretailacr.azurecr.io/cloudretail-frontend:${IMAGE_TAG}"
+
+                az containerapp create \
+                  --name cloudretail-production \
+                  --resource-group cloudretail-vm_group \
+                  --environment cloudretail-env \
+                  --image "$IMAGE" \
+                  --registry-server cloudretailacr.azurecr.io \
+                  --target-port 8080 \
+                  --ingress external \
+                  --min-replicas 1 \
+                  --max-replicas 3 \
+                  --only-show-errors || \
+                az containerapp update \
+                  --name cloudretail-production \
+                  --resource-group cloudretail-vm_group \
+                  --image "$IMAGE"
+
+                echo "Production URL:"
+                az containerapp show \
+                  --name cloudretail-production \
+                  --resource-group cloudretail-vm_group \
+                  --query properties.configuration.ingress.fqdn \
+                  --output tsv
