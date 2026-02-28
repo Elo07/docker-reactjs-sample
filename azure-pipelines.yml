@@ -38,3 +38,52 @@ stages:
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/imagetag.txt'
         artifact: 'imageTag'
+  
+- stage: Staging
+  displayName: 'Deploy to Staging'
+  dependsOn: CI
+  condition: succeeded('CI')
+  jobs:
+  - job: DeployStaging
+    displayName: 'Deploy to Staging Container App'
+    pool:
+      name: 'CloudRetailAgentPool'
+    steps:
+
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        artifact: 'imageTag'
+        path: '$(Pipeline.Workspace)/imageTag'
+
+    - task: AzureCLI@2
+      displayName: 'Deploy to Staging Azure Container App'
+      inputs:
+        azureSubscription: 'azure-connection'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          IMAGE_TAG=$(cat $(Pipeline.Workspace)/imageTag/imagetag.txt)
+          IMAGE="cloudretailacr.azurecr.io/cloudretail-frontend:${IMAGE_TAG}"
+
+          az containerapp create \
+            --name cloudretail-staging \
+            --resource-group cloudretail-vm_group \
+            --environment cloudretail-env \
+            --image "$IMAGE" \
+            --registry-server cloudretailacr.azurecr.io \
+            --target-port 8080 \
+            --ingress external \
+            --min-replicas 1 \
+            --max-replicas 2 \
+            --only-show-errors || \
+          az containerapp update \
+            --name cloudretail-staging \
+            --resource-group cloudretail-vm_group \
+            --image "$IMAGE"
+
+          echo "Staging URL:"
+          az containerapp show \
+            --name cloudretail-staging \
+            --resource-group cloudretail-vm_group \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv
